@@ -1,15 +1,18 @@
 // models/index.js
 const fs = require('fs');
 const path = require('path');
-const { Sequelize, DataTypes } = require('sequelize');
-const config = require('../config/config'); 
 const basename = path.basename(__filename);
+const { Sequelize, DataTypes } = require('sequelize');
+const config = require('../config/config');
 const env = process.env.NODE_ENV || 'development';
 const dbConfig = config[env];
 const db = {};
 
-const sequelize = new Sequelize(dbConfig.database, dbConfig.username, dbConfig.password, dbConfig);
-
+const sequelize = new Sequelize(dbConfig.database, dbConfig.username, dbConfig.password, {
+  host: dbConfig.host,
+  dialect: dbConfig.dialect,
+  logging: false
+});
 
 fs
   .readdirSync(__dirname)
