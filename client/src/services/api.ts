@@ -51,4 +51,8 @@ export const platformApi = {
     api.put(`/platforms/${id}`, platformData),
 };
 
+export const postApi = {
+  deletePost: (data: any) => api.post('/accounts/posts/delete', data),
+};
+
 export default api; 

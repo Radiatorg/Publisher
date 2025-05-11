@@ -1,6 +1,7 @@
 'use strict';
 const { Model } = require('sequelize');
 
+
 module.exports = (sequelize, DataTypes) => {
   class Account extends Model {
     static associate(models) {
@@ -44,23 +45,25 @@ module.exports = (sequelize, DataTypes) => {
       unique: true,
     },
     access_token: {
-      type: DataTypes.STRING,
+      type: DataTypes.TEXT,
       allowNull: false,
     },
     refresh_token: {
-      type: DataTypes.STRING,
+      type: DataTypes.TEXT,
       allowNull: true,
     },
-    created_at: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW,
-      field: 'created_at',
-    },
+    telegram_data: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+    }
   }, {
     sequelize,
     modelName: 'Account',
     tableName: 'accounts',
-    timestamps: false,
+    timestamps: true,
+    underscored: true,
+    createdAt: 'created_at',
+    updatedAt: 'updated_at'
   });
 
   return Account;

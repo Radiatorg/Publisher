@@ -6,7 +6,7 @@ const cors = require('cors');
 const { sequelize } = require('./models');
 const errorHandler = require('./middleware/errorMiddleware');
 const bodyParser = require('body-parser');
-const telegramService = require('./services/TelegramService');
+const telegramService = require('./services/TelegramUserService');
 
 const indexRouter = require('./routes/index');
 
@@ -17,7 +17,7 @@ app.set('view engine', 'ejs');
 
 // Настройка CORS
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://192.168.1.6:5173'],
+  origin: ['http://localhost:5173', 'http://192.168.164.155:5173', 'http://192.168.1.6:5173'],
   credentials: true
 }));
 

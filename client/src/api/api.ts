@@ -25,6 +25,7 @@ api.interceptors.response.use(
         if (error.response?.status === 401) {
             // Если токен истек или недействителен, перенаправляем на страницу входа
             localStorage.removeItem('token');
+            // Используем window.location.href для принудительного перехода на страницу входа
             window.location.href = '/login';
         }
         return Promise.reject(error);

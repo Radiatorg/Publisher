@@ -1,31 +1,27 @@
 export interface Community {
-    id: string | number;
+    id: string;
     name: string;
-    photo?: string;
-    username?: string;
-    type?: string;
+    photo: string;
+    type: string;
+    platform: 'vk' | 'telegram';
+    accountId: string;
 }
 
 export interface Post {
-    id: string | number;
-    platform: 'vk' | 'tg';
+    id: string;
+    platform: 'vk' | 'telegram';
     text: string;
     date: number;
-    views: number;
-    likes: number;
-    reposts: number;
-    comments: number;
-    forwards: number;
-    attachments?: Array<{
-        type: string;
-        url: string;
-    }>;
-    media?: string[];
-    type: string;
+    likes?: number;
+    reposts?: number;
+    views?: number;
+    comments?: number;
+    forwards?: number;
+    attachments?: any[];
     isPinned?: boolean;
     isAd?: boolean;
+    type: 'post';
     community: Community;
-    channelId?: string | number;
 }
 
 export interface PostsResponse {

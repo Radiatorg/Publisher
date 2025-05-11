@@ -9,11 +9,12 @@ router
 .get('/', authMiddleware, accountRoute.getAccounts.bind(accountRoute))
 .post('/', authMiddleware, accountRoute.create.bind(accountRoute))
 .post('/vk', authMiddleware, accountRoute.createVKAccount.bind(accountRoute))
-.post('/tg', authMiddleware, accountRoute.createTelegramAccount.bind(accountRoute))
+.post('/telegram', authMiddleware, accountRoute.createTelegramAccount.bind(accountRoute))
 .delete('/:id', authMiddleware, accountRoute.delete.bind(accountRoute))
+.get('/:id/communities', authMiddleware, accountRoute.getVKCommunities.bind(accountRoute))
+.get('/:id/channels', authMiddleware, accountRoute.getTelegramChannels.bind(accountRoute))
 .get('/posts', authMiddleware, upload.array('attachments', 10), accountRoute.getPosts.bind(accountRoute))
 .post('/posts', authMiddleware, upload.array('attachments', 10), accountRoute.createPost.bind(accountRoute))
-.get('/:id/channels', authMiddleware, accountRoute.getTelegramChannels.bind(accountRoute))
-.get('/:id/communities', authMiddleware, accountRoute.getVKCommunities.bind(accountRoute))
-//1 рут - 1 к - n. к
+.post('/posts/delete', authMiddleware, accountRoute.deletePost.bind(accountRoute));
+
 module.exports = router;

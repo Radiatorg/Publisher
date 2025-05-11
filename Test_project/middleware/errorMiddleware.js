@@ -1,11 +1,11 @@
 module.exports = function errorHandler(err, req, res, next) {
     console.error(err.stack);
-    
+
     // Обработка JWT ошибок
     if (err.name === 'JsonWebTokenError') {
         return res.status(401).json({ message: 'Недействительный токен' });
     }
-    
+
     if (err.name === 'TokenExpiredError') {
         return res.status(401).json({ message: 'Срок действия токена истек' });
     }

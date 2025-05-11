@@ -73,7 +73,7 @@ export const PostsPage: React.FC = () => {
             ) : (
                 <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr', lg: '1fr 1fr 1fr' }, gap: 2 }}>
                     {posts.map((post) => (
-                        <PostCard key={`${post.platform}-${post.id}`} post={post} />
+                        <PostCard key={`${post.platform}-${post.id}`} post={post} onPostDeleted={fetchPosts} />
                     ))}
                 </Box>
             )}

@@ -7,6 +7,8 @@ const FormData = require('form-data');
 class VKService {
     constructor() {
         this.vk = null;
+        this.apiVersion = '5.131';
+        this.baseUrl = 'https://api.vk.com/method';
     }
 
     initialize(token) {
@@ -14,12 +16,25 @@ class VKService {
         return this.vk;
     }
 
-    async getUserInfo(token) {
-        const vk = new VK({ token });
-        const userInfo = await vk.api.users.get({
-            fields: ['photo_200', 'first_name', 'last_name']
-        });
-        return userInfo[0];
+    async getUserInfo(accessToken) {
+        try {
+            const response = await axios.get(`${this.baseUrl}/users.get`, {
+                params: {
+                    access_token: accessToken,
+                    v: this.apiVersion,
+                    fields: 'photo_200'
+                }
+            });
+
+            if (response.data.error) {
+                throw new Error(response.data.error.error_msg);
+            }
+
+            return response.data.response[0];
+        } catch (error) {
+            console.error('Error getting VK user info:', error);
+            throw error;
+        }
     }
 
     async getVKPlatform() {
@@ -122,80 +137,81 @@ class VKService {
         }
     }
 
-    async createPost(accountId, postData) {
+    async getCommunities(accessToken) {
         try {
-            const account = await Account.findByPk(accountId);
-            if (!account) {
-                throw new Error('Account not found');
-            }
-
-            // Инициализируем VK с токеном аккаунта
-            this.initialize(account.access_token);
-
-            const { text, attachments = [], communityId } = postData;
-            
-            // Upload media files if present
-            const uploadedAttachments = [];
-            for (const attachment of attachments) {
-                if (attachment.type === 'photo') {
-                    // Получаем сервер для загрузки
-                    const uploadServer = await this.vk.api.photos.getWallUploadServer({
-                        group_id: communityId
-                    });
-                    
-                    // Создаем FormData для загрузки
-                    const formData = new FormData();
-                    formData.append('photo', attachment.file, {
-                        filename: 'photo.jpg',
-                        contentType: 'image/jpeg'
-                    });
-                    
-                    // Загружаем фото на сервер VK
-                    const uploadResponse = await axios.post(uploadServer.upload_url, formData, {
-                        headers: {
-                            ...formData.getHeaders()
-                        }
-                    });
-                    
-                    // Парсим JSON строку photo
-                    const photoData = JSON.parse(uploadResponse.data.photo);
-                    if (!photoData || !photoData[0]) {
-                        throw new Error('Invalid photo data received from VK');
-                    }
-                    
-                    // Извлекаем необходимые данные из ответа
-                    const { photo, server, hash } = uploadResponse.data;
-                    
-                    // Сохраняем фото на стене
-                    const savedPhoto = await this.vk.api.photos.saveWallPhoto({
-                        group_id: communityId,
-                        photo: photo,
-                        server: server,
-                        hash: hash
-                    });
-                    
-                    if (savedPhoto && savedPhoto[0]) {
-                        uploadedAttachments.push(`photo${savedPhoto[0].owner_id}_${savedPhoto[0].id}`);
-                    }
+            console.log('Getting VK communities for token:', accessToken);
+            const response = await axios.get(`${this.baseUrl}/groups.get`, {
+                params: {
+                    access_token: accessToken,
+                    v: this.apiVersion,
+                    extended: 1,
+                    filter: 'admin'
                 }
-                // Add support for other attachment types (video, etc.) here
-            }
-
-            // Create the post
-            const post = await this.vk.api.wall.post({
-                owner_id: `-${communityId}`, // Negative ID for groups
-                message: text,
-                attachments: uploadedAttachments.join(','),
-                from_group: 1
             });
 
+            if (response.data.error) {
+                throw new Error(response.data.error.error_msg);
+            }
+
+            const communities = response.data.response.items.map(group => ({
+                id: group.id.toString(),
+                name: group.name,
+                type: 'community',
+                photo: group.photo_200,
+                membersCount: group.members_count || 0
+            }));
+
+            console.log('Found communities:', communities.length);
+            return communities;
+        } catch (error) {
+            console.error('Error getting VK communities:', error);
+            throw error;
+        }
+    }
+
+    async createPost(accountId, { text, attachments = [], communityId }) {
+        try {
+            const response = await axios.post(`${this.baseUrl}/wall.post`, null, {
+                params: {
+                    owner_id: `-${communityId}`,
+                    message: text,
+                    attachments: attachments.map(att => att.type + att.file).join(','),
+                    v: this.apiVersion
+                }
+            });
+
+            if (response.data.error) {
+                throw new Error(response.data.error.error_msg);
+            }
+
             return {
-                id: post.post_id,
+                id: response.data.response.post_id.toString(),
                 success: true
             };
         } catch (error) {
             console.error('Error creating VK post:', error);
-            throw new Error(`Failed to create VK post: ${error.message}`);
+            throw error;
+        }
+    }
+
+    async deletePost(accountId, communityId, postId) {
+        try {
+            const response = await axios.post(`${this.baseUrl}/wall.delete`, null, {
+                params: {
+                    owner_id: `-${communityId}`,
+                    post_id: postId,
+                    v: this.apiVersion
+                }
+            });
+
+            if (response.data.error) {
+                throw new Error(response.data.error.error_msg);
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Error deleting VK post:', error);
+            throw error;
         }
     }
 }

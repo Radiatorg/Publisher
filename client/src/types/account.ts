@@ -1,3 +1,10 @@
+export interface Community {
+    id: string;
+    name: string;
+    photo: string;
+    type: string;
+}
+
 export interface Account {
     id: number;
     user_id: number;
@@ -19,4 +26,6 @@ export interface Account {
         name: string;
         photo: string;
     };
+    communities?: Community[];
+    channels?: Community[];
 } 

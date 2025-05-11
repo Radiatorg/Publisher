@@ -1,20 +1,44 @@
 import React, { useEffect, useState } from 'react';
 import { accountApi } from '../api/accountApi';
 import { Account as AccountType } from '../types/account';
+import { TelegramSessionGenerator } from '../components/TelegramSessionGenerator';
+import { TextField, Alert } from '@mui/material';
+
+interface TelegramSession {
+    apiId: string;
+    apiHash: string;
+    session: string;
+}
+
+const STORAGE_KEY = 'telegram_api_credentials';
 
 const Accounts: React.FC = () => {
     const [accounts, setAccounts] = useState<AccountType[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
-    const [accessToken, setAccessToken] = useState('');
-    const [telegramId, setTelegramId] = useState('');
-    const [isAdding, setIsAdding] = useState(false);
-    const [isAddingTelegram, setIsAddingTelegram] = useState(false);
+    const [showAddAccount, setShowAddAccount] = useState(false);
+    const [platform, setPlatform] = useState('1');
+    const [vkToken, setVkToken] = useState('');
+    const [telegramSession, setTelegramSession] = useState<TelegramSession | null>(null);
+    const [telegramApiId, setTelegramApiId] = useState('');
+    const [telegramApiHash, setTelegramApiHash] = useState('');
+    const [showApiCredentials, setShowApiCredentials] = useState(false);
 
     useEffect(() => {
         fetchAccounts();
+        // Загружаем сохраненные API credentials
+        const savedCredentials = localStorage.getItem(STORAGE_KEY);
+        if (savedCredentials) {
+            const { apiId, apiHash } = JSON.parse(savedCredentials);
+            setTelegramApiId(apiId);
+            setTelegramApiHash(apiHash);
+        }
     }, []);
+
+    const saveApiCredentials = (apiId: string, apiHash: string) => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ apiId, apiHash }));
+    };
 
     const fetchAccounts = async () => {
         try {
@@ -29,45 +53,38 @@ const Accounts: React.FC = () => {
         }
     };
 
-    const handleAddVKAccount = async (e: React.FormEvent) => {
+    const handleAddAccount = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!accessToken) return;
 
         try {
-            setIsAdding(true);
+            setLoading(true);
             setError(null);
-            setSuccess(null);
             
-            await accountApi.createVKAccount(accessToken);
-            setAccessToken('');
-            setSuccess('VK account added successfully');
+            if (platform === '1') {
+                if (!vkToken) {
+                    setError('Please enter VK token');
+                    return;
+                }
+                await accountApi.createVKAccount(vkToken);
+            } else {
+                if (!telegramSession || !telegramApiId || !telegramApiHash) {
+                    setError('Please complete Telegram authentication');
+                    return;
+                }
+                // Сохраняем API credentials
+                saveApiCredentials(telegramApiId, telegramApiHash);
+                await accountApi.createTelegramAccount(telegramApiId, telegramApiHash, telegramSession.session);
+            }
             
+            setShowAddAccount(false);
+            setVkToken('');
+            setTelegramSession(null);
+            setSuccess(`${platform === '1' ? 'VK' : 'Telegram'} account added successfully`);
             await fetchAccounts();
-        } catch (err) {
-            setError('Failed to add VK account');
+        } catch (err: any) {
+            setError(err.response?.data?.message || `Failed to add ${platform === '1' ? 'VK' : 'Telegram'} account`);
         } finally {
-            setIsAdding(false);
-        }
-    };
-
-    const handleAddTelegramAccount = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!telegramId) return;
-
-        try {
-            setIsAddingTelegram(true);
-            setError(null);
-            setSuccess(null);
-            
-            await accountApi.createTelegramAccount(telegramId);
-            setTelegramId('');
-            setSuccess('Telegram account added successfully');
-            
-            await fetchAccounts();
-        } catch (err) {
-            setError('Failed to add Telegram account');
-        } finally {
-            setIsAddingTelegram(false);
+            setLoading(false);
         }
     };
 
@@ -93,7 +110,15 @@ const Accounts: React.FC = () => {
 
     return (
         <div className="container mx-auto px-4 py-8">
-            <h1 className="text-2xl font-bold mb-8">Accounts</h1>
+            <div className="flex justify-between items-center mb-8">
+                <h1 className="text-2xl font-bold">Accounts</h1>
+                <button
+                    onClick={() => setShowAddAccount(true)}
+                    className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                >
+                    Add Account
+                </button>
+            </div>
             
             {/* Уведомления */}
             {error && (
@@ -108,93 +133,145 @@ const Accounts: React.FC = () => {
                 </div>
             )}
             
-            {/* VK Account Form */}
-            <div className="mb-8 bg-white p-6 rounded-lg shadow">
-                <h2 className="text-xl font-semibold mb-4">Add VK Account</h2>
-                <form onSubmit={handleAddVKAccount} className="space-y-4">
-                    <div>
-                        <label htmlFor="accessToken" className="block text-sm font-medium text-gray-700">
-                            VK Access Token
-                        </label>
-                        <input
-                            type="text"
-                            id="accessToken"
-                            value={accessToken}
-                            onChange={(e) => setAccessToken(e.target.value)}
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-white"
-                            placeholder="Enter VK access token"
-                        />
-                    </div>
-                    <button
-                        type="submit"
-                        disabled={isAdding}
-                        className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                    >
-                        {isAdding ? 'Adding...' : 'Add VK Account'}
-                    </button>
-                </form>
-            </div>
+            {showAddAccount && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-lg p-6 max-w-md w-full">
+                        <h2 className="text-xl font-semibold mb-4">Add Account</h2>
+                        <form onSubmit={handleAddAccount}>
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700">Platform</label>
+                                <select
+                                    value={platform}
+                                    onChange={(e) => setPlatform(e.target.value)}
+                                    className="mt-1 block w-full rounded-lg border border-gray-200 bg-white text-gray-900 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-colors"
+                                >
+                                    <option value="1">VK</option>
+                                    <option value="2">Telegram</option>
+                                </select>
+                            </div>
 
-            {/* Telegram Account Form */}
-            <div className="mb-8 bg-white p-6 rounded-lg shadow">
-                <h2 className="text-xl font-semibold mb-4">Add Telegram Account</h2>
+                            {platform === '1' && (
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-gray-700">VK Token</label>
+                                    <input
+                                        type="text"
+                                        value={vkToken}
+                                        onChange={(e) => setVkToken(e.target.value)}
+                                        className="mt-1 block w-full rounded-lg border border-gray-200 bg-white text-gray-900 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-colors"
+                                        placeholder="Enter VK token"
+                                    />
+                                </div>
+                            )}
+
+                            {platform === '2' && (
+                                <div className="space-y-4">
                 <div className="mb-4 text-sm text-gray-500 space-y-2">
                     <p className="font-medium">Чтобы подключить Telegram аккаунт:</p>
                     <ol className="list-decimal list-inside ml-2 space-y-1">
-                        <li>Найдите нашего бота в Telegram: <a href="https://t.me/publicher_test_bot" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800">@publicher_test_bot</a></li>
-                        <li>Отправьте команду /start боту</li>
-                        <li>Бот ответит вам сообщением с вашим Telegram ID</li>
-                        <li>Скопируйте ID и вставьте его в поле выше</li>
+                                            <li>Получите API ID и API Hash на сайте <a href="https://my.telegram.org/apps" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800">my.telegram.org/apps</a></li>
+                                            <li>Создайте сессию, используя официальное приложение Telegram</li>
+                                            <li>Введите полученные данные в форму ниже</li>
                     </ol>
+                    <button
+                        type="button"
+                        onClick={() => setShowApiCredentials(!showApiCredentials)}
+                        className="text-indigo-600 hover:text-indigo-800 text-sm mt-2"
+                    >
+                        {showApiCredentials ? 'Скрыть сохраненные данные' : 'Показать сохраненные данные'}
+                    </button>
+                    {showApiCredentials && telegramApiId && telegramApiHash && (
+                        <Alert severity="info" className="mt-2">
+                            <p>Сохраненные данные:</p>
+                            <p>API ID: {telegramApiId}</p>
+                            <p>API Hash: {telegramApiHash}</p>
+                        </Alert>
+                    )}
                 </div>
-                <form onSubmit={handleAddTelegramAccount} className="space-y-4">
                     <div>
-                        <label htmlFor="telegramId" className="block text-sm font-medium text-gray-700">
-                            Telegram ID
-                        </label>
-                        <input
-                            type="text"
-                            id="telegramId"
-                            value={telegramId}
-                            onChange={(e) => setTelegramId(e.target.value)}
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-white"
-                            placeholder="Enter your Telegram ID"
+                                        <TextField
+                                            fullWidth
+                                            label="API ID"
+                                            value={telegramApiId}
+                                            onChange={(e) => setTelegramApiId(e.target.value)}
+                                            margin="normal"
+                                            required
+                                            type="number"
+                                        />
+                                        <TextField
+                                            fullWidth
+                                            label="API Hash"
+                                            value={telegramApiHash}
+                                            onChange={(e) => setTelegramApiHash(e.target.value)}
+                                            margin="normal"
+                                            required
+                                        />
+                                        <div onClick={(e) => e.stopPropagation()}>
+                                            <TelegramSessionGenerator
+                                                apiId={telegramApiId}
+                                                apiHash={telegramApiHash}
+                                                onSessionGenerated={(session) => setTelegramSession({ apiId: telegramApiId, apiHash: telegramApiHash, session })}
                         />
                     </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="flex justify-end space-x-3 mt-6">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAddAccount(false)}
+                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                >
+                                    Cancel
+                                </button>
                     <button
                         type="submit"
-                        disabled={isAddingTelegram}
-                        className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                                    disabled={loading}
+                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
                     >
-                        {isAddingTelegram ? 'Adding...' : 'Add Telegram Account'}
+                                    {loading ? 'Adding...' : 'Add Account'}
                     </button>
+                            </div>
                 </form>
             </div>
+                </div>
+            )}
 
             {/* Accounts List */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {accounts.map((account) => (
                     <div key={account.id} className="bg-white p-6 rounded-lg shadow">
                         <div className="flex justify-between items-start">
-                            <div>
-                                <h3 className="text-lg font-semibold text-gray-900">
-                                    {account.platform?.name} Account
-                                </h3>
-                                {(account.vkData || account.telegramData) && (
-                                    <div className="flex items-center mt-2">
+                            <div className="flex items-center space-x-4">
+                                {(account.vkData?.photo || account.telegramData?.photo) && (
+                                    <div className="flex-shrink-0">
                                         <img 
                                             src={account.vkData?.photo || account.telegramData?.photo} 
                                             alt="Profile" 
-                                            className="w-12 h-12 rounded-full mr-3"
+                                            className="w-12 h-12 rounded-full object-cover"
+                                            onError={(e) => {
+                                                const target = e.target as HTMLImageElement;
+                                                target.src = 'https://via.placeholder.com/48?text=No+Photo';
+                                            }}
+                                            style={{
+                                                backgroundColor: '#f3f4f6',
+                                                minWidth: '48px',
+                                                minHeight: '48px'
+                                            }}
                                         />
-                                        <span className="text-base font-medium text-gray-800">
-                                            {account.vkData?.name || account.telegramData?.name}
-                                        </span>
                                     </div>
                                 )}
-                                <p className="text-sm text-gray-500 mt-2">
-                                    ID: {account.account_sn_id}
-                                </p>
+                                <div>
+                                    <h3 className="text-lg font-semibold text-gray-900">
+                                        {account.platform?.name} Account
+                                    </h3>
+                                    <div className="text-base font-medium text-gray-800">
+                                        {account.vkData?.name || account.telegramData?.name || 'Unknown User'}
+                                    </div>
+                                    <p className="text-sm text-gray-500 mt-1">
+                                        ID: {account.account_sn_id}
+                                    </p>
+                                </div>
                             </div>
                             <button
                                 onClick={() => handleDelete(account.id)}

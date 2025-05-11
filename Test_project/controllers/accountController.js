@@ -1,13 +1,14 @@
 // controllers/accountController.js
 const accountService = require('../services/AccountService');
 const vkService = require('../services/VKService');
-const TelegramService = require('../services/TelegramService');
+const TelegramUserService = require('../services/TelegramUserService');
 const catchAsync = require('../utils/catchAsync');
+const logger = require('../utils/logger');
 
 class AccountController {
-    telegramService = null
-    constructor(){
-        this.telegramService = new TelegramService();
+    constructor() {
+        this.telegramService = require('../services/TelegramUserService');
+        this.vkService = require('../services/VKService');
     }
     async create(req, res) {
         try {
@@ -32,35 +33,79 @@ class AccountController {
             // Получаем данные для каждого аккаунта
             const accountsWithData = await Promise.all(accounts.map(async (account) => {
                 const accountData = account.toJSON();
-                if (account.platform_id === 1) {
+                if (account.platform_id === 1) { // VK
                     try {
-                      const userInfo = await vkService.getUserInfo(account.access_token);
-                      return {
-                          ...account.toJSON(),
-                          vkData: {
-                              name: `${userInfo.first_name} ${userInfo.last_name}`,
-                              photo: userInfo.photo_200
-                          }
-                      };
+                        const userInfo = await this.vkService.getUserInfo(account.access_token);
+                        return {
+                            ...accountData,
+                            platform: {
+                                id: 1,
+                                name: 'vk'
+                            },
+                            vkData: {
+                                name: `${userInfo.first_name} ${userInfo.last_name}`,
+                                photo: userInfo.photo_200
+                            }
+                        };
                     } catch (error) {
                         console.error('Error fetching VK data:', error);
+                        return {
+                            ...accountData,
+                            platform: {
+                                id: 1,
+                                name: 'vk'
+                            }
+                        };
                     }
-                } else if (account.platform_id === 2) {
+                } else if (account.platform_id === 2) { // Telegram
                     try {
-                        const telegramData = await this.telegramService.getTelegramData(account.access_token);
-                        
-                        accountData.telegramData = telegramData;
+                        const telegramData = JSON.parse(account.refresh_token);
+                        if (!telegramData.apiId || !telegramData.apiHash || !telegramData.session) {
+                            logger.error('Invalid Telegram data in account:', account.id);
+                            return {
+                                ...accountData,
+                                platform: {
+                                    id: 2,
+                                    name: 'telegram'
+                                }
+                            };
+                        }
+
+                        const userData = await this.telegramService.getTelegramData(
+                            telegramData.apiId,
+                            telegramData.apiHash,
+                            telegramData.session
+                        );
+
+                        return {
+                            ...accountData,
+                            platform: {
+                                id: 2,
+                                name: 'telegram'
+                            },
+                            telegramData: {
+                                name: `${userData.firstName} ${userData.lastName || ''}`.trim(),
+                                username: userData.username,
+                                photo: userData.photo
+                            }
+                        };
                     } catch (error) {
-                        console.error('Error fetching Telegram data:', error);
+                        logger.error('Error fetching Telegram data:', error);
+                        return {
+                            ...accountData,
+                            platform: {
+                                id: 2,
+                                name: 'telegram'
+                            }
+                        };
                     }
                 }
-                
                 return accountData;
             }));
 
             res.json(accountsWithData);
         } catch (error) {
-            console.error('Error in getAccounts:', error);
+            logger.error('Error in getAccounts:', error);
             res.status(500).json({ message: 'Error fetching accounts' });
         }
     }
@@ -124,165 +169,242 @@ class AccountController {
 
     async createTelegramAccount(req, res) {
         try {
-              const { telegram_id } = req.body;
-              if (!telegram_id) {
-                  return res.status(400).json({ message: 'Telegram ID is required' });
-              }
+            const { apiId, apiHash, session } = req.body;
+            const userId = req.user.id;
 
-            if (isNaN(telegram_id)) {
-                return res.status(400).json({ 
-                    message: 'Invalid Telegram ID format. Please enter a numeric ID.',
-                    help: 'You can get your Telegram ID by sending /start to the bot'
-                });
+            if (!apiId || !apiHash || !session) {
+                return res.status(400).json({ message: 'Missing required fields' });
             }
 
+            // Create new Telegram account
+            const account = await accountService.createAccount({
+                userId: userId,
+                platformId: 2,
+                accountSnId: `tg_${userId}_${Date.now()}`,
+                accessToken: session,
+                refreshToken: JSON.stringify({
+                    apiId,
+                    apiHash,
+                    session // Сохраняем строку сессии
+                }),
+                type: 'telegram'
+            });
+
             try {
-                // Проверяем, может ли бот получить информацию о пользователе
-                const chat = await this.telegramService.bot.getChat(telegram_id);
-                
-                // Проверяем, что это личный чат с пользователем
-                if (chat.type !== 'private') {
-                    return res.status(400).json({ 
-                        message: 'Invalid chat type. Please provide your personal Telegram ID.',
-                        help: 'You can get your Telegram ID by sending /start to the bot'
-                    });
-                }
-
-                // Проверяем, существует ли уже аккаунт с таким ID
-                const existingAccount = await accountService.getAccountBySnId(telegram_id);
-                if (existingAccount) {
-                    return res.status(400).json({
-                        message: 'This Telegram account is already connected to the system'
-                    });
-                }
-
-                // Создаем запись в базе данных
-                const account = await accountService.createAccount({
-                    userId: req.user.id,
-                    platformId: 2,
-                    accountSnId: telegram_id,
-                    accessToken: telegram_id,
-                    refreshToken: ''
-                });
-
-                // Отправляем сообщение пользователю в Telegram
-                await this.telegramService.bot.sendMessage(telegram_id, 
-                    'Ваш Telegram аккаунт успешно подключен к системе! ' +
-                    'Теперь вы можете использовать все функции бота.'
+                // Initialize Telegram client to get user info
+                const telegramData = await this.telegramService.getTelegramData(
+                    apiId,
+                    apiHash,
+                    session
                 );
+
+                // Update account with user info
+                account.telegramData = {
+                    name: `${telegramData.firstName} ${telegramData.lastName || ''}`.trim(),
+                    username: telegramData.username,
+                    photo: telegramData.photo
+                };
 
                 res.status(201).json({
                     account,
-                    message: 'Telegram account added successfully'
+                    telegramData: account.telegramData
                 });
             } catch (error) {
-                if (error.message.includes('chat not found')) {
-                    return res.status(400).json({
-                        message: 'Cannot access Telegram account. Please make sure:',
-                        help: [
-                            '1. You have sent /start to the bot',
-                            '2. You have not blocked the bot',
-                            '3. You are using the correct Telegram ID (get it by sending /start to the bot)'
-                        ]
-                    });
-                }
+                // Если не удалось получить данные, удаляем аккаунт
+                await accountService.deleteAccount(account.id);
                 throw error;
             }
         } catch (error) {
             console.error('Error creating Telegram account:', error);
             res.status(500).json({ 
-                message: 'Failed to create Telegram account',
-                error: error.message 
+                message: error.message,
+                details: error.stack
+            });
+        }
+    }
+
+    async getTelegramChannels(req, res) {
+        try {
+            const account = await accountService.getAccountById(req.params.id);
+
+            if (!account) {
+                return res.status(404).json({ error: 'Account not found' });
+            }
+
+            if (account.platform_id !== 2) {
+                return res.status(400).json({ error: 'Not a Telegram account' });
+            }
+
+            const telegramData = JSON.parse(account.refresh_token);
+            if (!telegramData.apiId || !telegramData.apiHash || !telegramData.session) {
+                logger.error('Invalid Telegram data:', {
+                    accountId: account.id,
+                    hasApiId: !!telegramData.apiId,
+                    hasApiHash: !!telegramData.apiHash,
+                    hasSession: !!telegramData.session
+                });
+                return res.status(400).json({ error: 'Invalid Telegram session data' });
+            }
+
+            logger.debug('Getting channels for account:', {
+                accountId: account.id,
+                apiId: telegramData.apiId,
+                hasApiHash: !!telegramData.apiHash,
+                hasSession: !!telegramData.session
+            });
+
+            const channels = await this.telegramService.getChannels(
+                telegramData.apiId,
+                telegramData.apiHash,
+                telegramData.session
+            );
+
+            res.json(channels);
+        } catch (error) {
+            logger.error('Error getting Telegram channels:', error);
+            res.status(500).json({ 
+                error: error.message,
+                details: error.stack
+            });
+        }
+    }
+
+    async getVKCommunities(req, res) {
+        try {
+            const accountId = req.params.id;
+            console.log('Getting VK communities for account:', accountId);
+            
+            const account = await accountService.getAccountById(accountId);
+            if (!account) {
+                console.log('Account not found');
+                return res.status(404).json({ message: 'Account not found' });
+            }
+            
+            if (account.platform_id !== 1) {
+                console.log('Not a VK account');
+                return res.status(400).json({ message: 'Not a VK account' });
+            }
+
+            console.log('Account found, access token:', account.access_token ? '***' : 'undefined');
+            if (!account.access_token) {
+                return res.status(400).json({ message: 'No access token found' });
+            }
+
+            const communities = await this.vkService.getCommunities(account.access_token);
+            console.log('Successfully got communities:', communities.length);
+            res.json(communities);
+        } catch (error) {
+            console.error('Error fetching VK communities:', error);
+            res.status(500).json({ 
+                message: 'Error fetching VK communities',
+                error: error.message
             });
         }
     }
 
     async getPosts(req, res) {
         try {
-            // Получаем все аккаунты пользователя
+            console.log('Starting getPosts for user:', req.user.id);
             const accounts = await accountService.getAccounts(req.user.id);
+            console.log('Found accounts:', accounts.length);
             let allPosts = [];
 
-            // Для каждого аккаунта получаем посты
             for (const account of accounts) {
                 try {
+                    console.log('Processing account:', account.id, 'platform:', account.platform_id);
                     if (account.platform_id === 1) { // VK
-                        // Получаем список сообществ пользователя
-                        const communities = await vkService.getUserAdminCommunities(account.access_token);
+                        const communities = await this.vkService.getCommunities(account.access_token);
+                        console.log('Found VK communities:', communities.length);
                         
-                        // Для каждого сообщества получаем посты
                         for (const community of communities) {
-                            const vkPosts = await vkService.getAllPosts(community.id, account.access_token);
-                            const formattedPosts = vkPosts.map(post => ({
-                                id: post.id,
-                                platform: 'vk',
-                                text: post.text,
-                                date: post.date,
-                                likes: post.likes || 0,
-                                reposts: post.reposts || 0,
-                                views: post.views || 0,
-                                comments: post.comments || 0,
-                                forwards: post.forwards || 0,
-                                attachments: post.attachments,
-                                isPinned: post.isPinned,
-                                isAd: post.isAd,
-                                type: 'post',
-                                community: {
-                                    id: community.id,
-                                    name: community.name,
-                                    photo: community.photo
-                                }
-                            }));
-                            allPosts = allPosts.concat(formattedPosts);
+                            try {
+                                const vkPosts = await this.vkService.getAllPosts(community.id, account.access_token);
+                                console.log(`Found ${vkPosts.length} posts for VK community ${community.id}`);
+                                const formattedPosts = vkPosts.map(post => ({
+                                    id: post.id,
+                                    platform: 'vk',
+                                    text: post.text,
+                                    date: post.date,
+                                    likes: post.likes || 0,
+                                    reposts: post.reposts || 0,
+                                    views: post.views || 0,
+                                    comments: post.comments || 0,
+                                    forwards: post.forwards || 0,
+                                    attachments: post.attachments,
+                                    isPinned: post.isPinned,
+                                    isAd: post.isAd,
+                                    type: 'post',
+                                    community: {
+                                        id: community.id,
+                                        name: community.name,
+                                        photo: community.photo,
+                                        accountId: account.id
+                                    }
+                                }));
+                                allPosts = allPosts.concat(formattedPosts);
+                            } catch (error) {
+                                console.error(`Error getting posts for VK community ${community.id}:`, error);
+                                continue;
+                            }
                         }
-                    } 
-                    else if (account.platform_id === 2) { // Telegram
-                        // Получаем список каналов пользователя
-                        const numericId = parseInt(account.account_sn_id, 10);
-                        if (isNaN(numericId)) {
-                            console.error(`Invalid Telegram ID format: ${account.account_sn_id}`);
+                    } else if (account.platform_id === 2) { // Telegram
+                        try {
+                            console.log('Processing Telegram account:', account.id);
+                            const telegramData = JSON.parse(account.refresh_token);
+                            if (!telegramData.apiId || !telegramData.apiHash || !telegramData.session) {
+                                console.error('Invalid Telegram data:', {
+                                    hasApiId: !!telegramData.apiId,
+                                    hasApiHash: !!telegramData.apiHash,
+                                    hasSession: !!telegramData.session
+                                });
+                                continue;
+                            }
+
+                            console.log('Getting Telegram channels...');
+                            const channels = await this.telegramService.getChannels(
+                                telegramData.apiId,
+                                telegramData.apiHash,
+                                telegramData.session
+                            );
+                            console.log('Found Telegram channels:', channels.length);
+                            
+                            for (const channel of channels) {
+                                try {
+                                    console.log('Getting posts for channel:', channel.id);
+                                    const tgPosts = await this.telegramService.getPosts(
+                                        account.id,
+                                        telegramData.apiId,
+                                        telegramData.apiHash,
+                                        channel.id
+                                    );
+                                    console.log(`Found ${tgPosts.length} posts for Telegram channel ${channel.id}`);
+                                    console.log('Telegram posts:', JSON.stringify(tgPosts, null, 2));
+                                    allPosts = allPosts.concat(tgPosts);
+                                } catch (error) {
+                                    console.error(`Error getting posts for Telegram channel ${channel.id}:`, error);
+                                    continue;
+                                }
+                            }
+                        } catch (error) {
+                            console.error('Error getting Telegram channels:', error);
                             continue;
-                        }
-                        const channels = await this.telegramService.getUserAdminChannels(numericId);
-                        
-                        // Для каждого канала получаем посты
-                        for (const channel of channels) {
-                            const tgPosts = await this.telegramService.getAllPosts(channel.id);
-                            const formattedPosts = tgPosts.map(post => ({
-                                id: post.messageId,
-                                platform: 'tg',
-                                text: post.text || '',
-                                date: post.date,
-                                likes: 0,
-                                reposts: 0,
-                                views: post.views || 0,
-                                comments: 0,
-                                forwards: post.forwards || 0,
-                                attachments: post.media ? post.media.map(url => ({
-                                    type: 'photo',
-                                    url: url
-                                })) : [],
-                                isPinned: false,
-                                isAd: false,
-                                type: post.type || 'post',
-                                community: {
-                                    id: channel.id,
-                                    name: channel.name,
-                                    photo: channel.photo
-                                }
-                            }));
-                            allPosts = allPosts.concat(formattedPosts);
                         }
                     }
                 } catch (error) {
-                    console.error(`Error getting posts for account ${account.id}:`, error);
-                    // Продолжаем с следующим аккаунтом даже если произошла ошибка
+                    console.error(`Error processing account ${account.id}:`, error);
                     continue;
                 }
             }
 
-            // Сортируем все посты по дате (от новых к старым)
+            console.log('Total posts found:', allPosts.length);
+            console.log('Posts by platform:', {
+                vk: allPosts.filter(p => p.platform === 'vk').length,
+                telegram: allPosts.filter(p => p.platform === 'telegram').length
+            });
+
+            // Сортируем посты по дате (новые сверху)
             allPosts.sort((a, b) => b.date - a.date);
+            
             res.json({
                 posts: allPosts,
                 total: allPosts.length
@@ -299,7 +421,6 @@ class AccountController {
             const attachments = req.files || [];
 
             const account = await accountService.getAccountById(accountId);
-            console.log(account)
             if (!account) {
                 return res.status(404).json({ message: 'Account not found' });
             }
@@ -315,13 +436,12 @@ class AccountController {
                     communityId: targetId
                 });
             } else if (account.platform_id === 2) { // Telegram
-                result = await this.telegramService.createPost(accountId, {
+                result = await this.telegramService.createPost(req.user.id, targetId, {
                     text,
                     attachments: attachments.map(file => ({
                         type: file.mimetype.startsWith('image/') ? 'photo' : 'video',
                         file: file.buffer
-                    })),
-                    channelId: targetId
+                    }))
                 });
             } else {
                 return res.status(400).json({ message: 'Unsupported platform' });
@@ -340,45 +460,33 @@ class AccountController {
         }
     }
 
-    async getTelegramChannels(req, res) {
+    async deletePost(req, res) {
         try {
-            const { id } = req.params;
-            const account = await accountService.getAccountById(id);
-            
-            if (!account) {
-                return res.status(404).json({ message: 'Account not found' });
+            const { platform, accountId, communityId, channelId, postId } = req.body;
+
+            if (!platform || !postId) {
+                return res.status(400).json({ message: 'Missing required parameters' });
             }
 
-            if (account.platform_id !== 2) {
-                return res.status(400).json({ message: 'This is not a Telegram account' });
+            if (platform === 'vk') {
+                if (!accountId || !communityId) {
+                    return res.status(400).json({ message: 'Missing VK parameters' });
+                }
+                await vkService.deletePost(accountId, communityId, postId);
+            } else if (platform === 'tg') {
+                if (!channelId) {
+                    return res.status(400).json({ message: 'Missing Telegram channel ID' });
+                }
+                await this.telegramService.deletePost(req.user.id, channelId, postId);
             }
 
-            const channels = await this.telegramService.getUserAdminChannels(account.account_sn_id);
-            res.json(channels);
+            res.json({ success: true });
         } catch (error) {
-            console.error('Error getting Telegram channels:', error);
-            res.status(500).json({ message: 'Failed to get Telegram channels' });
-        }
-    }
-
-    async getVKCommunities(req, res) {
-        try {
-            const { id } = req.params;
-            const account = await accountService.getAccountById(id);
-            
-            if (!account) {
-                return res.status(404).json({ message: 'Account not found' });
-            }
-
-            if (account.platform_id !== 1) {
-                return res.status(400).json({ message: 'This is not a VK account' });
-            }
-
-            const communities = await vkService.getUserAdminCommunities(account.access_token);
-            res.json(communities);
-        } catch (error) {
-            console.error('Error getting VK communities:', error);
-            res.status(500).json({ message: 'Failed to get VK communities' });
+            console.error('Error deleting post:', error);
+            res.status(500).json({ 
+                message: error.message || 'Failed to delete post',
+                error: error.message 
+            });
         }
     }
 }
